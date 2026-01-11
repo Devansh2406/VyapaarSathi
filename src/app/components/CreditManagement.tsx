@@ -632,3 +632,80 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     </div>
   );
 }
+
+function CustomerCard({ customer, onSendReminder, onAddCredit, onSettle }: {
+  customer: Customer;
+  onSendReminder: (c: Customer) => void;
+  onAddCredit: (c: Customer) => void;
+  onSettle: (c: Customer) => void;
+}) {
+  const statusConfig = {
+    paid: { color: 'bg-green-100 text-green-700', icon: CheckCircle, label: 'Paid' },
+    due: { color: 'bg-orange-100 text-orange-700', icon: Clock, label: 'Due' },
+    overdue: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Overdue' }
+  };
+  const status = statusConfig[customer.status];
+  const StatusIcon = status.icon;
+
+  return (
+    <Card className={`p-4 ${customer.status === 'overdue' ? 'border-l-4 border-l-red-500' : ''}`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <h3 className="text-gray-800 font-medium">{customer.name}</h3>
+            {customer.totalCredit > 0 ? (
+              <Badge className={`${status.color} hover:${status.color} text-xs`}>
+                <StatusIcon className="w-3 h-3 mr-1" />{status.label}
+              </Badge>
+            ) : (
+              <Badge className="bg-green-100 text-green-700 text-xs gap-1">
+                <CheckCircle className="w-3 h-3" /> Paid
+              </Badge>
+            )}
+
+          </div>
+          <div className="text-sm text-gray-600 flex items-center gap-2">
+            <Phone className="w-3 h-3" /> {customer.phone}
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-gray-500">Total Due</div>
+          <div className="text-lg font-bold text-red-600">₹{customer.totalCredit}</div>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between gap-2 mt-4">
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1 text-red-600 border-red-200 hover:bg-red-50"
+          onClick={() => onAddCredit(customer)}
+        >
+          <Plus className="w-4 h-4 mr-1" /> Add
+        </Button>
+
+        {customer.totalCredit > 0 && (
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              className="flex-1 border-green-200 text-green-700 hover:bg-green-50"
+              onClick={() => onSettle(customer)}
+            >
+              <CheckCircle className="w-3 h-3 mr-1" /> Settle
+            </Button>
+
+            <Button
+              size="sm"
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+              onClick={() => onSendReminder(customer)}
+            >
+              <Send className="w-3 h-3 mr-1" /> Nudge
+            </Button>
+          </>
+        )}
+      </div>
+    </Card>
+  );
+}
+

@@ -49,7 +49,6 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
     return getFromDB(DB_KEYS.ORDERS, []);
   });
 
-  // Save changes to DB
   useEffect(() => {
     saveToDB(DB_KEYS.ORDERS, orders);
   }, [orders]);
@@ -58,7 +57,6 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [selectedOrderForPayment, setSelectedOrderForPayment] = useState<number | null>(null);
 
-  // QR Logic
   const [upiConfigs, setUpiConfigs] = useState<UPIConfig[]>([]);
   const [selectedQrId, setSelectedQrId] = useState<string>('');
 
@@ -110,7 +108,70 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
     window.open(`https://wa.me/?text=${text}`, '_blank');
   };
 
-  // Helper to convert Base64 to Blob
+  // Helper: Generate a detailed Payment Card Image with Text encoded visually
+  const generatePaymentCard = async (qrBase64: string, order: Order, shopName: string): Promise<File> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      canvas.width = 800;
+      canvas.height = 1000;
+
+      // 1. Background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 2. Header Gradient
+      const grad = ctx.createLinearGradient(0, 0, 0, 150);
+      grad.addColorStop(0, '#16a34a'); // Green-600
+      grad.addColorStop(1, '#15803d'); // Green-700
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, 150);
+
+      // 3. Header Text
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 45px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Order Payment', canvas.width / 2, 90);
+
+      // 4. Amount Section
+      ctx.fillStyle = '#000000';
+      ctx.font = '30px sans-serif';
+      ctx.fillText(`Order for ${order.customerName}`, canvas.width / 2, 220);
+
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '25px sans-serif';
+      ctx.fillText(`Total Bill (${order.items.length} items)`, canvas.width / 2, 270);
+
+      ctx.fillStyle = '#16a34a'; // Green-600
+      ctx.font = 'bold 100px sans-serif';
+      ctx.fillText(`₹${order.total}`, canvas.width / 2, 380);
+
+      // 5. QR Code
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 200, 420, 400, 400);
+
+        // 6. Footer
+        ctx.fillStyle = '#374151';
+        ctx.font = '30px sans-serif';
+        ctx.fillText(`Pay to: ${shopName}`, canvas.width / 2, 880);
+
+        ctx.fillStyle = '#9ca3af';
+        ctx.font = '20px sans-serif';
+        ctx.fillText('Generated via Vyapaar Sathi', canvas.width / 2, 950);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(new File([blob], `order_payment_${order.customerName}_${Date.now()}.png`, { type: 'image/png' }));
+          }
+        }, 'image/png');
+      };
+      img.src = qrBase64;
+    });
+  };
+
   const dataURLtoFile = (dataurl: string, filename: string) => {
     const arr = dataurl.split(',');
     const mime = arr[0].match(/:(.*?);/)?.[1];
@@ -148,49 +209,52 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
     if (!order) return;
 
     const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
-    const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
+    if (!selectedConfig || !selectedConfig.qrImage) return;
 
-    const message = `Hello ${order.customerName}, your order is accepted!\n\nPlease pay ₹${order.total} to ${accountName}.\n(Scan attached QR or copy it)\n\nTotal Due: ₹${order.total}`;
+    const accountName = selectedConfig.customName;
+    const message = `Hello ${order.customerName}, your order is accepted!\n\nPlease pay ₹${order.total} to ${accountName} using the attached QR Card.\n\nTotal Due: ₹${order.total}`;
 
-    // 1. Try Mobile Native Share (Image + Text)
-    if (selectedConfig && selectedConfig.qrImage && navigator.share && navigator.canShare) {
-      try {
-        const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
-        if (navigator.canShare({ files: [file] })) {
+    // 1. Generate Smart Card
+    let fileToShare: File;
+    try {
+      fileToShare = await generatePaymentCard(selectedConfig.qrImage, order, accountName);
+    } catch (e) {
+      console.error("Canvas gen failed", e);
+      fileToShare = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
+    }
+
+    // 2. Try Mobile Native Share (Image + Text)
+    if (navigator.share && navigator.canShare) {
+      if (navigator.canShare({ files: [fileToShare] })) {
+        try { await navigator.clipboard.writeText(message); } catch (e) { }
+
+        try {
           await navigator.share({
-            files: [file],
+            files: [fileToShare],
             title: 'Payment Request',
             text: message
           });
-          toast.success(`Shared via WhatsApp`);
+          toast.success(`Shared! (Message copied)`);
           return;
+        } catch (error) {
+          console.warn('Share API failed', error);
         }
-      } catch (error) {
-        console.warn('Share API failed, trying URL scheme', error);
       }
     }
 
     // 2. Desktop Fallback: Copy Image + Open WhatsApp
-    let clipboardSuccess = false;
-    if (selectedConfig && selectedConfig.qrImage) {
-      try {
-        const blob = await (await fetch(selectedConfig.qrImage)).blob();
-        await navigator.clipboard.write([
-          new ClipboardItem({ [blob.type]: blob })
-        ]);
-        clipboardSuccess = true;
-      } catch (e) {
-        console.warn("Auto-copy failed", e);
-      }
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ [fileToShare.type]: fileToShare })
+      ]);
+      toast.info('Payment Card copied! Paste in WhatsApp.', { duration: 4000 });
+    } catch (e) {
+      console.warn("Auto-copy failed", e);
     }
 
     // Fallback URL Scheme
     const url = `https://wa.me/${order.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
-
-    if (clipboardSuccess) {
-      toast.info('QR Image copied! PASTE (Ctrl+V) in chat.', { duration: 5000 });
-    }
   };
 
   const parseAndAddOrder = () => {

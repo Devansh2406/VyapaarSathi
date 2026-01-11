@@ -151,60 +151,128 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     }
   };
 
+  // Helper: Generate a detailed Payment Card Image with Text encoded visually
+  const generatePaymentCard = async (qrBase64: string, customer: Customer, shopName: string): Promise<File> => {
+    return new Promise((resolve) => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return; // Should not happen
+
+      // Set Canvas Size (High Res)
+      canvas.width = 800;
+      canvas.height = 1000;
+
+      // 1. Background
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // 2. Header Gradient
+      const grad = ctx.createLinearGradient(0, 0, 0, 150);
+      grad.addColorStop(0, '#7c3aed'); // Purple-600
+      grad.addColorStop(1, '#6d28d9'); // Purple-700
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, 150);
+
+      // 3. Header Text
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 45px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Payment Request', canvas.width / 2, 90);
+
+      // 4. Amount Section
+      ctx.fillStyle = '#000000';
+      ctx.font = '30px sans-serif';
+      ctx.fillText(`Hello ${customer.name}`, canvas.width / 2, 220);
+
+      ctx.fillStyle = '#6b7280'; // Gray-500
+      ctx.font = '25px sans-serif';
+      ctx.fillText('Total Pending Amount', canvas.width / 2, 270);
+
+      ctx.fillStyle = '#dc2626'; // Red-600
+      ctx.font = 'bold 100px sans-serif';
+      ctx.fillText(`₹${customer.totalCredit}`, canvas.width / 2, 380);
+
+      // 5. QR Code
+      const img = new Image();
+      img.onload = () => {
+        // Draw Image Centered
+        ctx.drawImage(img, 200, 420, 400, 400);
+
+        // 6. Footer
+        ctx.fillStyle = '#374151'; // Gray-700
+        ctx.font = '30px sans-serif';
+        ctx.fillText(`Pay to: ${shopName}`, canvas.width / 2, 880);
+
+        ctx.fillStyle = '#9ca3af'; // Gray-400
+        ctx.font = '20px sans-serif';
+        ctx.fillText('Generated via ViewApp', canvas.width / 2, 950);
+
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(new File([blob], `payment_${customer.name}_${Date.now()}.png`, { type: 'image/png' }));
+          }
+        }, 'image/png');
+      };
+      img.src = qrBase64;
+    });
+  };
+
   const handleShareOnWhatsApp = async () => {
     if (!selectedCustomer) return;
 
     const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
-    const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
+    if (!selectedConfig || !selectedConfig.qrImage) return;
 
-    // Updated text to imply image might need pasting
-    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName}.\n(Scan attached QR or copy it)\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
+    const accountName = selectedConfig.customName;
+    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending for ${accountName}.\n\nPlease pay using the attached QR Card.\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
 
-    // 1. Try Mobile Native Share (Image + Text)
-    if (selectedConfig && selectedConfig.qrImage && navigator.share && navigator.canShare) {
-      try {
-        const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
-        if (navigator.canShare({ files: [file] })) {
-          // Copy text to clipboard as backup (WhatsApp often drops caption on Android)
-          try { await navigator.clipboard.writeText(message); } catch (e) { console.warn('Clipboard write failed', e); }
+    // 1. Generate Smart Card
+    let fileToShare: File;
+    try {
+      fileToShare = await generatePaymentCard(selectedConfig.qrImage, selectedCustomer, accountName);
+    } catch (e) {
+      // Fallback to raw QR if canvas fails
+      console.error("Canvas gen failed", e);
+      fileToShare = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
+    }
 
+    // 2. Try Mobile Native Share (Image + Text)
+    if (navigator.share && navigator.canShare) {
+      // Check if we can share file
+      if (navigator.canShare({ files: [fileToShare] })) {
+        // Copy text to clipboard as backup
+        try { await navigator.clipboard.writeText(message); } catch (e) {
+          console.warn('Clip write failed', e);
+        }
+
+        try {
           await navigator.share({
-            files: [file],
+            files: [fileToShare],
             title: 'Payment Reminder',
-            text: message
+            text: message // Some apps ignore this
           });
-          toast.success(`Shared! (Message copied to clipboard - Paste if missing)`);
+          toast.success('Shared! (Message copied to clipboard)');
           setShowQRDialog(false);
           return;
+        } catch (err) {
+          console.warn('Share cancelled/failed', err);
         }
-      } catch (error) {
-        console.warn('Share API failed/cancelled, trying URL scheme', error);
       }
     }
 
-    // 2. Desktop Fallback: Copy Image + Open WhatsApp
-    let clipboardSuccess = false;
-    if (selectedConfig && selectedConfig.qrImage) {
-      try {
-        const blob = await (await fetch(selectedConfig.qrImage)).blob();
-        await navigator.clipboard.write([
-          new ClipboardItem({ [blob.type]: blob })
-        ]);
-        clipboardSuccess = true;
-      } catch (e) {
-        console.warn("Auto-copy failed", e);
-      }
+    // 3. Desktop Fallback: Copy Generated Card + Open WhatsApp
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ [fileToShare.type]: fileToShare })
+      ]);
+      toast.info('Payment Card copied! Paste in WhatsApp.', { duration: 4000 });
+    } catch (e) {
+      console.warn("Auto-copy failed", e);
     }
 
-    // Fallback: WhatsApp URL Scheme (Text Only)
+    // Fallback URL Scheme
     const url = `https://wa.me/${selectedCustomer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
-
-    if (clipboardSuccess) {
-      toast.info('QR Image copied! Please PASTE (Ctrl+V) it in the chat.', { duration: 5000 });
-    } else {
-      toast.success(`WhatsApp opened for ${selectedCustomer.name}`);
-    }
     setShowQRDialog(false);
   };
 

@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Phone, MapPin, Check, X, MessageCircle, Package, QrCode, CheckCircle, Share2, ClipboardPaste, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Phone, MapPin, Check, X, MessageCircle, Package, QrCode, CheckCircle, Share2, ClipboardPaste, AlertCircle, Send } from 'lucide-react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from './ui/dialog';
 import { Textarea } from './ui/textarea';
 import { Input } from './ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Label } from './ui/label';
 import { toast } from 'sonner';
 import BottomNav from './BottomNav';
 import { findProductByName } from '../../services/inventoryService';
@@ -35,9 +37,15 @@ interface Order {
   timestamp: string;
 }
 
+interface UPIConfig {
+  id: string;
+  appName: string;
+  customName: string;
+  qrImage: string;
+}
+
 export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
   const [orders, setOrders] = useState<Order[]>(() => {
-    // Initialize from Local DB
     return getFromDB(DB_KEYS.ORDERS, []);
   });
 
@@ -49,6 +57,21 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
   const [showQRDialog, setShowQRDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [selectedOrderForPayment, setSelectedOrderForPayment] = useState<number | null>(null);
+
+  // QR Logic
+  const [upiConfigs, setUpiConfigs] = useState<UPIConfig[]>([]);
+  const [selectedQrId, setSelectedQrId] = useState<string>('');
+
+  useEffect(() => {
+    const savedConfigs = localStorage.getItem('upi_config');
+    if (savedConfigs) {
+      const parsed = JSON.parse(savedConfigs);
+      setUpiConfigs(parsed);
+      if (parsed.length > 0) {
+        setSelectedQrId(parsed[0].id);
+      }
+    }
+  }, []);
 
   const [importText, setImportText] = useState('');
   const [importCustomerName, setImportCustomerName] = useState('');
@@ -87,24 +110,102 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
     window.open(`https://wa.me/?text=${text}`, '_blank');
   };
 
+  // Helper to convert Base64 to Blob
+  const dataURLtoFile = (dataurl: string, filename: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  };
+
+  const handleCopyQR = async () => {
+    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
+    if (!selectedConfig || !selectedConfig.qrImage) {
+      toast.error("No QR code to copy");
+      return;
+    }
+
+    try {
+      const blob = await (await fetch(selectedConfig.qrImage)).blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      toast.success("QR Code copied! You can paste it.");
+    } catch (err) {
+      console.error("Copy failed", err);
+      toast.error("Failed to copy image.");
+    }
+  };
+
+  const handleSharePaymentRequest = async () => {
+    if (!selectedOrderForPayment) return;
+    const order = orders.find(o => o.id === selectedOrderForPayment);
+    if (!order) return;
+
+    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
+    const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
+
+    const message = `Hello ${order.customerName}, your order is accepted!\n\nPlease pay ₹${order.total} to ${accountName}.\n(Scan attached QR or copy it)\n\nTotal Due: ₹${order.total}`;
+
+    // 1. Try Mobile Native Share (Image + Text)
+    if (selectedConfig && selectedConfig.qrImage && navigator.share && navigator.canShare) {
+      try {
+        const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: 'Payment Request',
+            text: message
+          });
+          toast.success(`Shared via WhatsApp`);
+          return;
+        }
+      } catch (error) {
+        console.warn('Share API failed, trying URL scheme', error);
+      }
+    }
+
+    // 2. Desktop Fallback: Copy Image + Open WhatsApp
+    let clipboardSuccess = false;
+    if (selectedConfig && selectedConfig.qrImage) {
+      try {
+        const blob = await (await fetch(selectedConfig.qrImage)).blob();
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob })
+        ]);
+        clipboardSuccess = true;
+      } catch (e) {
+        console.warn("Auto-copy failed", e);
+      }
+    }
+
+    // Fallback URL Scheme
+    const url = `https://wa.me/${order.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
+
+    if (clipboardSuccess) {
+      toast.info('QR Image copied! PASTE (Ctrl+V) in chat.', { duration: 5000 });
+    }
+  };
+
   const parseAndAddOrder = () => {
     if (!importText || !importCustomerName) return;
 
     const lines = importText.split('\n').filter(line => line.trim());
     const newItems: OrderItem[] = lines.map(line => {
-      // 1. Parse Quantity
       const qtyMatch = line.match(/^\d+/);
       const quantity = qtyMatch ? parseInt(qtyMatch[0]) : 1;
-
-      // 2. Parse Name
       const rawName = line.replace(/^\d+/, '').replace(/[-x]/, '').trim();
-
-      // 3. Check Inventory
       const product = findProductByName(rawName);
 
       if (product) {
         return {
-          name: product.name, // Use canonical name
+          name: product.name,
           quantity,
           price: product.sellingPrice,
           isAvailable: product.quantity >= quantity,
@@ -114,8 +215,8 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
         return {
           name: rawName || 'Unknown Item',
           quantity,
-          price: 0, // Unknown price
-          isAvailable: false, // Assume not in standard inventory
+          price: 0,
+          isAvailable: false,
           stockQty: 0
         };
       }
@@ -140,11 +241,13 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
     setImportText('');
     setImportCustomerName('');
     setImportPhone('');
-    toast.success('Order Imported & Checked vs Inventory!');
+    toast.success('Order Imported!');
   };
 
   const pendingOrders = orders.filter(o => o.status === 'pending');
   const completedOrders = orders.filter(o => o.status !== 'pending');
+  const currentQR = upiConfigs.find(u => u.id === selectedQrId);
+  const currentOrderTotal = selectedOrderForPayment ? orders.find(o => o.id === selectedOrderForPayment)?.total : 0;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -356,14 +459,24 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
                           Paid
                         </div>
                       ) : (
-                        <Button
-                          onClick={() => handleMarkAsPaid(order.id)}
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-blue-600 border-blue-200 hover:bg-blue-50"
-                        >
-                          Mark as Paid
-                        </Button>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => handleShowQR(order.id)}
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 bg-blue-50 text-blue-600 hover:bg-blue-100"
+                          >
+                            Share QR
+                          </Button>
+                          <Button
+                            onClick={() => handleMarkAsPaid(order.id)}
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-blue-600 border-blue-200 hover:bg-blue-50"
+                          >
+                            Mark Paid
+                          </Button>
+                        </div>
                       )}
                     </div>
                   )}
@@ -406,38 +519,94 @@ export default function WhatsAppOrders({ onNavigate }: WhatsAppOrdersProps) {
         </DialogContent>
       </Dialog>
 
-      {/* ... QR Dialog remains same ... */}
+      {/* Enhanced QR Payment Dialog */}
       <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Payment QR Code</DialogTitle>
-            <DialogDescription>Customer can scan this QR code to pay via UPI</DialogDescription>
+            <DialogTitle>Request Payment</DialogTitle>
+            <DialogDescription>Share QR code with customer</DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 mt-4">
-            <div className="bg-white p-6 rounded-2xl border-2 border-gray-200 flex items-center justify-center relative overflow-hidden">
-              <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/50 to-white/80 pointer-events-none" />
-              <div className="w-48 h-48 bg-gray-900 rounded-xl flex items-center justify-center relative z-10">
-                <QrCode className="w-32 h-32 text-white" />
-              </div>
-            </div>
 
-            {selectedOrderForPayment && (
-              <div className="text-center">
-                <p className="text-sm text-gray-600 mb-1">Amount to Pay</p>
-                <p className="text-3xl font-bold text-gray-900">
-                  ₹{orders.find(o => o.id === selectedOrderForPayment)?.total}
-                </p>
+          <div className="space-y-6 mt-2">
+            {/* QR Selection */}
+            {upiConfigs.length > 0 ? (
+              <div className="space-y-2">
+                <Label>Select Payment QR</Label>
+                <Select value={selectedQrId} onValueChange={setSelectedQrId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select QR Code" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {upiConfigs.map(config => (
+                      <SelectItem key={config.id} value={config.id}>
+                        {config.customName} ({config.appName})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
+                No custom QRs setup. Using default.
               </div>
             )}
 
-            <div className="space-y-2">
+            <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center group relative">
+              <p className="text-sm text-gray-500 mb-2">Total Amount</p>
+              <p className="text-3xl font-bold text-gray-900 mb-4">₹{currentOrderTotal}</p>
+
+              {currentQR ? (
+                <img
+                  src={currentQR.qrImage}
+                  alt="Payment QR"
+                  className="w-48 h-48 object-contain rounded-lg"
+                />
+              ) : (
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`upi://pay?pa=kirana@upi&pn=KiranaStore&am=${currentOrderTotal}&cu=INR`)}`}
+                  alt="Payment QR"
+                  className="w-48 h-48"
+                />
+              )}
+              <div className="text-xs text-gray-400 mt-2">
+                {currentQR ? currentQR.customName : 'Store UPI'}
+              </div>
+            </div>
+
+            <div className="space-y-3">
               <Button
-                onClick={() => selectedOrderForPayment && handleMarkAsPaid(selectedOrderForPayment)}
-                className="w-full h-11 bg-green-600 hover:bg-green-700 text-white rounded-xl shadow-lg shadow-green-200"
+                className="w-full bg-green-600 hover:bg-green-700 text-white h-11 text-lg"
+                onClick={handleSharePaymentRequest}
               >
-                <CheckCircle className="w-4 h-4 mr-2" />
-                Mark as Application Paid
+                <Send className="w-5 h-5 mr-2" /> Share on WhatsApp
               </Button>
+
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                  onClick={handleCopyQR}
+                >
+                  <QrCode className="w-4 h-4 mr-2" /> Copy QR
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="flex-1 text-gray-500"
+                  onClick={() => setShowQRDialog(false)}
+                >
+                  Close
+                </Button>
+              </div>
+
+              {selectedOrderForPayment && orders.find(o => o.id === selectedOrderForPayment)?.paymentStatus !== 'paid' && (
+                <Button
+                  variant="link"
+                  onClick={() => selectedOrderForPayment && handleMarkAsPaid(selectedOrderForPayment)}
+                  className="w-full text-green-600 text-sm"
+                >
+                  Mark as Paid Locally
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>

@@ -214,7 +214,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
   // Refactored: Reusable Share Logic
   const processShare = async (customer: Customer, config?: UPIConfig) => {
-    toast.loading("Preparing Payment Card...");
+    toast.loading("Generating Payment Card...");
 
     const accountName = config ? config.customName : 'Kirana Store';
     const message = `Hello ${customer.name}, ₹${customer.totalCredit} payment is pending for ${accountName}.\n\nPlease pay using the attached QR Card.\n\nTotal Due: ₹${customer.totalCredit}`;
@@ -234,43 +234,16 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     toast.dismiss(); // Remove loading
 
     if (!fileToShare) {
-      // Text Only fallback
+      toast.error("No QR Image available.");
       const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
       window.open(url, '_blank');
       return;
     }
 
-    // 2. PRIMARY STRATEGY: Direct Link + Clipboard Paste
-    // The user EXPLICITLY requested "Not to select contact". 
-    // This is the only web-standard way to do that: Copy Image -> Go to Chat -> User Pastes.
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({ [fileToShare.type]: fileToShare })
-      ]);
-
-      // Success! Image is in clipboard.
-      toast.success("QR Copied! PASTE it in WhatsApp.", {
-        duration: 6000,
-        icon: '📋',
-        description: "Press & hold message bar to paste QR."
-      });
-
-      // Open Direct Link
-      const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
-      window.open(url, '_blank');
-      return;
-
-    } catch (clipboardError) {
-      console.warn("Clipboard Image Failed (Browser Restriction)", clipboardError);
-      // Fallthrough to Strategy B
-    }
-
-    // 3. FALLBACK: Native Share Sheet
-    // If Clipboard failed/blocked, we MUST use the share sheet to ensure QR delivery.
+    // 2. PRIMARY: Mobile Native Share (The ONLY reliable way to send Image)
+    // We prioritize Image Delivery over "Direct to Number".
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [fileToShare] })) {
-      try { await navigator.clipboard.writeText(message); } catch (e) { }
-
-      toast.info("Auto-copy blocked. Select contact to send QR.");
+      try { await navigator.clipboard.writeText(message); } catch (e) { } // Copy text as backup
 
       try {
         await navigator.share({
@@ -278,15 +251,29 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
           title: 'Payment Reminder',
           text: message
         });
+        toast.success("Shared! If caption is missing, Long Press to Paste.");
+        return;
       } catch (err) {
         console.warn('Share cancelled', err);
+        return;
       }
-    } else {
-      // 4. Ultimate Fail
-      toast.error("Could not copy image. Sending text link.");
-      const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
-      window.open(url, '_blank');
     }
+
+    // 3. FALLBACK: Desktop Flow (Clipboard + Link)
+    // If native share isn't supported (Desktop), we try the clipboard way.
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ [fileToShare.type]: fileToShare })
+      ]);
+      toast.info("Image Copied! PASTE (Ctrl+V) in Chat.", { duration: 5000, icon: '📋' });
+    } catch (e) {
+      console.warn("Clipboard failed", e);
+      toast.error("Could not copy image. Please try on Mobile.");
+    }
+
+    // Open chat for Desktop
+    const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
   };
 
   // Nudge Click Handler

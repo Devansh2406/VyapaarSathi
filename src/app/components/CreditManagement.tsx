@@ -234,45 +234,15 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     toast.dismiss(); // Remove loading
 
     if (!fileToShare) {
-      // Text Only fallback
       const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
       window.open(url, '_blank');
       return;
     }
 
-    // 2. PRIMARY STRATEGY: Direct Link + Clipboard Paste (User Requirement: "Directly to Customer")
-    // This is the only web-standard way to do that: Copy Image -> Go to Chat -> User Pastes.
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({ [fileToShare.type]: fileToShare })
-      ]);
-
-      // Success! Image is in clipboard.
-      toast.success("✅ QR Copied!", {
-        description: "PRESS & HOLD in WhatsApp to PASTE the QR.",
-        duration: 5000,
-        icon: '📋'
-      });
-
-      // Small delay to ensure user sees toast / clipboard finishes
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      // Open Direct Link
-      const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
-      window.open(url, '_blank');
-      return;
-
-    } catch (clipboardError) {
-      console.warn("Clipboard Image Failed (Browser Restriction)", clipboardError);
-      // Fallthrough to Strategy B
-    }
-
-    // 3. FALLBACK: Native Share Sheet
-    // If Clipboard failed/blocked, we MUST use the share sheet to ensure QR delivery.
+    // 2. PRIMARY: Use System Share Sheet (No Pasting Required)
+    // User requested NO "Manual Paste". This is the only web method that attaches the file directly.
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [fileToShare] })) {
       try { await navigator.clipboard.writeText(message); } catch (e) { }
-
-      toast.info("Auto-copy blocked. Select contact (Manually) to send QR.");
 
       try {
         await navigator.share({
@@ -280,15 +250,26 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
           title: 'Payment Reminder',
           text: message
         });
+        // No toast needed if successful, the system sheet is obvious.
+        return;
       } catch (err) {
         console.warn('Share cancelled', err);
+        return;
       }
-    } else {
-      // 4. Ultimate Fail
-      toast.error("Could not copy image. Sending text link.");
-      const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
-      window.open(url, '_blank');
     }
+
+    // 3. FALLBACK: Desktop (Clipboard)
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ [fileToShare.type]: fileToShare })
+      ]);
+      toast.info("Image Copied! Paste in WhatsApp.");
+    } catch (e) {
+      toast.error("Could not copy image.");
+    }
+
+    const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
+    window.open(url, '_blank');
   };
 
   // Nudge Click Handler

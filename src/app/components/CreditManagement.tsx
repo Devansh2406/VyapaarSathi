@@ -165,12 +165,15 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
       try {
         const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
         if (navigator.canShare({ files: [file] })) {
+          // Copy text to clipboard as backup (WhatsApp often drops caption on Android)
+          try { await navigator.clipboard.writeText(message); } catch (e) { console.warn('Clipboard write failed', e); }
+
           await navigator.share({
             files: [file],
             title: 'Payment Reminder',
             text: message
           });
-          toast.success(`Shared via WhatsApp`);
+          toast.success(`Shared! (Message copied to clipboard - Paste if missing)`);
           setShowQRDialog(false);
           return;
         }
@@ -457,7 +460,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
         </DialogContent>
       </Dialog>
 
-      {/* Reminder Dialog with QR Selection */}
+      {/* Reminder Dialog with QR Selection & Actions */}
       <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -488,7 +491,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
                 </div>
               )}
 
-              <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center group relative action-area">
+              <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center group relative">
                 <div className="text-sm text-gray-500 mb-2">Scan to Pay ₹{selectedCustomer.totalCredit}</div>
 
                 {currentQR ? (
@@ -498,7 +501,6 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
                     className="w-48 h-48 object-contain rounded-lg"
                   />
                 ) : (
-                  /* Fallback Mock QR if no local config found */
                   <img
                     src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`upi://pay?pa=kirana@upi&pn=KiranaStore&am=${selectedCustomer.totalCredit}&cu=INR`)}`}
                     alt="Payment QR"
@@ -512,7 +514,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
                 {/* Overlay Hint */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
-                  <span className="bg-black/75 text-white text-xs px-2 py-1 rounded">Preview Only</span>
+                  <span className="bg-black/75 text-white text-xs px-2 py-1 rounded">Preview</span>
                 </div>
               </div>
 

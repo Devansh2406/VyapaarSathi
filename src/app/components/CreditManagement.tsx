@@ -214,7 +214,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
   // Refactored: Reusable Share Logic
   const processShare = async (customer: Customer, config?: UPIConfig) => {
-    toast.loading("Opening WhatsApp...");
+    toast.loading("Preparing WhatsApp...");
 
     const accountName = config ? config.customName : 'Kirana Store';
     const message = `Hello ${customer.name}, ₹${customer.totalCredit} payment is pending for ${accountName}.\n\nPlease pay using the attached QR Card.\n\nTotal Due: ₹${customer.totalCredit}`;
@@ -233,10 +233,33 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
     toast.dismiss(); // Remove loading
 
-    // 2. Mobile Native Share (Image + Text)
+    // 2. ATTEMPT PRIMARY FLOW: Direct to Number + Copy Image
+    // This solves "Need to select sender" - we go direct!
+    if (fileToShare) {
+      try {
+        // Try to copy Image to Clipboard
+        await navigator.clipboard.write([
+          new ClipboardItem({ [fileToShare.type]: fileToShare })
+        ]);
+
+        // If we are here, Copy Worked!
+        toast.success("Image Copied! PASTE it in the chat.", { duration: 5000, icon: '📋' });
+
+        // Open Specific Chat
+        const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
+        window.open(url, '_blank');
+        return; // Success! We are done.
+
+      } catch (copyError) {
+        console.warn("Clipboard Image Failed, falling back to Share Sheet", copyError);
+        // If Copy fails (some mobile browsers), we fall through to Step 3
+      }
+    }
+
+    // 3. FALLBACK: Mobile Native Share (Image + Text)
+    // Used if Clipboard failed. User MUST select contact here, but at least the image attaches.
     if (fileToShare && navigator.share && navigator.canShare && navigator.canShare({ files: [fileToShare] })) {
-      // Copy text backup
-      try { await navigator.clipboard.writeText(message); } catch (e) { }
+      try { await navigator.clipboard.writeText(message); } catch (e) { } // Copy text as backup
 
       try {
         await navigator.share({
@@ -244,26 +267,14 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
           title: 'Payment Reminder',
           text: message
         });
-        toast.success(`Shared! (Message copied)`);
         return;
       } catch (err) {
         console.warn('Share cancelled', err);
-        return; // Don't fallback if user cancelled explicitly
       }
     }
 
-    // 3. Desktop/Fallback: URL Scheme (Text Only or Clipboard)
-    if (fileToShare) {
-      try {
-        await navigator.clipboard.write([
-          new ClipboardItem({ [fileToShare.type]: fileToShare })
-        ]);
-        toast.info('Payment Card copied! Paste in WhatsApp.', { duration: 4000 });
-      } catch (e) {
-        console.warn("Clip copy failed", e);
-      }
-    }
-
+    // 4. LAST RESORT: Text Only Loop
+    // If everything failed, just open the link with text
     const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   };

@@ -132,35 +132,76 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     return new File([u8arr], filename, { type: mime });
   };
 
+  const handleCopyQR = async () => {
+    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
+    if (!selectedConfig || !selectedConfig.qrImage) {
+      toast.error("No QR code to copy");
+      return;
+    }
+
+    try {
+      const blob = await (await fetch(selectedConfig.qrImage)).blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({ [blob.type]: blob })
+      ]);
+      toast.success("QR Code copied! You can paste it anywhere.");
+    } catch (err) {
+      console.error("Copy failed", err);
+      toast.error("Failed to copy image. Browser might not support it.");
+    }
+  };
+
   const handleShareOnWhatsApp = async () => {
     if (!selectedCustomer) return;
 
     const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
     const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
 
-    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName} (QR Attached).\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
+    // Updated text to imply image might need pasting
+    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName}.\n(Scan attached QR or copy it)\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
 
-    // Try Web Share API first (Mobile Native Share)
-    if (selectedConfig && selectedConfig.qrImage && navigator.share) {
+    // 1. Try Mobile Native Share (Image + Text)
+    if (selectedConfig && selectedConfig.qrImage && navigator.share && navigator.canShare) {
       try {
         const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
-        await navigator.share({
-          files: [file],
-          title: 'Payment Reminder',
-          text: message
-        });
-        toast.success(`Shared via WhatsApp`);
-        setShowQRDialog(false);
-        return;
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: 'Payment Reminder',
+            text: message
+          });
+          toast.success(`Shared via WhatsApp`);
+          setShowQRDialog(false);
+          return;
+        }
       } catch (error) {
-        console.warn('Share API failed, falling back to URL scheme', error);
+        console.warn('Share API failed/cancelled, trying URL scheme', error);
+      }
+    }
+
+    // 2. Desktop Fallback: Copy Image + Open WhatsApp
+    let clipboardSuccess = false;
+    if (selectedConfig && selectedConfig.qrImage) {
+      try {
+        const blob = await (await fetch(selectedConfig.qrImage)).blob();
+        await navigator.clipboard.write([
+          new ClipboardItem({ [blob.type]: blob })
+        ]);
+        clipboardSuccess = true;
+      } catch (e) {
+        console.warn("Auto-copy failed", e);
       }
     }
 
     // Fallback: WhatsApp URL Scheme (Text Only)
     const url = `https://wa.me/${selectedCustomer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
-    toast.success(`WhatsApp opened for ${selectedCustomer.name}`);
+
+    if (clipboardSuccess) {
+      toast.info('QR Image copied! Please PASTE (Ctrl+V) it in the chat.', { duration: 5000 });
+    } else {
+      toast.success(`WhatsApp opened for ${selectedCustomer.name}`);
+    }
     setShowQRDialog(false);
   };
 
@@ -447,7 +488,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
                 </div>
               )}
 
-              <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center">
+              <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center group relative action-area">
                 <div className="text-sm text-gray-500 mb-2">Scan to Pay ₹{selectedCustomer.totalCredit}</div>
 
                 {currentQR ? (
@@ -468,6 +509,11 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
                 <div className="text-xs text-gray-400 mt-2">
                   {currentQR ? currentQR.customName : 'Default Store QR'}
                 </div>
+
+                {/* Overlay Hint */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="bg-black/75 text-white text-xs px-2 py-1 rounded">Preview Only</span>
+                </div>
               </div>
 
               <div className="space-y-3">
@@ -477,13 +523,23 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
                 >
                   <Send className="w-5 h-5 mr-2" /> Share on WhatsApp
                 </Button>
-                <Button
-                  variant="ghost"
-                  className="w-full"
-                  onClick={() => setShowQRDialog(false)}
-                >
-                  Close
-                </Button>
+
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    className="flex-1 border-blue-200 text-blue-700 hover:bg-blue-50"
+                    onClick={handleCopyQR}
+                  >
+                    <QrCode className="w-4 h-4 mr-2" /> Copy QR
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="flex-1 text-gray-500"
+                    onClick={() => setShowQRDialog(false)}
+                  >
+                    Close
+                  </Button>
+                </div>
               </div>
             </div>
           )}

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ArrowLeft, Plus, Phone, AlertTriangle, CheckCircle, Clock, Send, CreditCard, Banknote, Percent } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { ArrowLeft, Plus, Phone, AlertTriangle, CheckCircle, Clock, Send, CreditCard, Banknote, Percent, QrCode } from 'lucide-react';
 import { Card } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -24,6 +24,13 @@ interface Customer {
   transactions: { date: string; type: 'credit' | 'payment'; amount: number; description: string }[];
 }
 
+interface UPIConfig {
+  id: string;
+  appName: string;
+  customName: string;
+  qrImage: string;
+}
+
 export default function CreditManagement({ onNavigate }: CreditManagementProps) {
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -40,6 +47,8 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
   // QR Reminder State
   const [showQRDialog, setShowQRDialog] = useState(false);
+  const [upiConfigs, setUpiConfigs] = useState<UPIConfig[]>([]);
+  const [selectedQrId, setSelectedQrId] = useState<string>('');
 
   // New Customer State
   const [newCustomerName, setNewCustomerName] = useState('');
@@ -68,6 +77,17 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
       transactions: []
     }
   ]);
+
+  useEffect(() => {
+    const savedConfigs = localStorage.getItem('upi_config');
+    if (savedConfigs) {
+      const parsed = JSON.parse(savedConfigs);
+      setUpiConfigs(parsed);
+      if (parsed.length > 0) {
+        setSelectedQrId(parsed[0].id);
+      }
+    }
+  }, []);
 
   const totalCreditDue = customers.reduce((sum, c) => sum + c.totalCredit, 0);
 
@@ -102,12 +122,11 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
   const handleShareOnWhatsApp = () => {
     if (!selectedCustomer) return;
 
-    // Construct UPI Link (Mock UPI ID for demo)
-    const upiId = 'kirana@upi';
-    const upiLink = `upi://pay?pa=${upiId}&pn=KiranaStore&am=${selectedCustomer.totalCredit}&cu=INR`;
+    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
+    const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
 
-    // Message with Payment Link
-    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store. \n\nPlease pay using this UPI Link: ${upiLink} \n\nOr scan the QR code at the shop.`;
+    // Note: We can send text regarding the specific account, but we can't attach the image directly via URL scheme
+    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName} (QR available at shop).\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
 
     const url = `https://wa.me/${selectedCustomer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
@@ -198,6 +217,8 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     setShowSettleDialog(false);
     toast.success(paymentMode === 'wave-off' ? 'Amount waived off' : 'Payment recorded successfully');
   };
+
+  const currentQR = upiConfigs.find(u => u.id === selectedQrId);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-20">
@@ -365,7 +386,7 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
         </DialogContent>
       </Dialog>
 
-      {/* Reminder Dialog with QR */}
+      {/* Reminder Dialog with QR Selection */}
       <Dialog open={showQRDialog} onOpenChange={setShowQRDialog}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -373,14 +394,50 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
           </DialogHeader>
           {selectedCustomer && (
             <div className="space-y-6 mt-4">
+              {/* QR Selection Dropdown */}
+              {upiConfigs.length > 0 ? (
+                <div className="space-y-2">
+                  <Label>Select Payment QR</Label>
+                  <Select value={selectedQrId} onValueChange={setSelectedQrId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select QR Code" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {upiConfigs.map(config => (
+                        <SelectItem key={config.id} value={config.id}>
+                          {config.customName} ({config.appName})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : (
+                <div className="text-sm text-yellow-600 bg-yellow-50 p-2 rounded">
+                  No custom QRs setup. Using default.
+                </div>
+              )}
+
               <div className="bg-white p-4 rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center">
                 <div className="text-sm text-gray-500 mb-2">Scan to Pay ₹{selectedCustomer.totalCredit}</div>
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`upi://pay?pa=kirana@upi&pn=KiranaStore&am=${selectedCustomer.totalCredit}&cu=INR`)}`}
-                  alt="Payment QR"
-                  className="w-48 h-48"
-                />
-                <div className="text-xs text-gray-400 mt-2">UPI: kirana@upi</div>
+
+                {currentQR ? (
+                  <img
+                    src={currentQR.qrImage}
+                    alt="Payment QR"
+                    className="w-48 h-48 object-contain rounded-lg"
+                  />
+                ) : (
+                  /* Fallback Mock QR if no local config found */
+                  <img
+                    src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`upi://pay?pa=kirana@upi&pn=KiranaStore&am=${selectedCustomer.totalCredit}&cu=INR`)}`}
+                    alt="Payment QR"
+                    className="w-48 h-48"
+                  />
+                )}
+
+                <div className="text-xs text-gray-400 mt-2">
+                  {currentQR ? currentQR.customName : 'Default Store QR'}
+                </div>
               </div>
 
               <div className="space-y-3">

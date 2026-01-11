@@ -11,8 +11,9 @@ import Reports from './components/Reports';
 import AIInsights from './components/AIInsights';
 import StoreFront from './components/StoreFront';
 import Settings from './components/Settings';
+import PaymentSetup from './components/PaymentSetup';
 
-type Screen = 'login' | 'dashboard' | 'inventory' | 'orders' | 'expenses' | 'credit' | 'dayClosing' | 'reports' | 'insights' | 'store' | 'settings';
+type Screen = 'login' | 'dashboard' | 'inventory' | 'orders' | 'expenses' | 'credit' | 'dayClosing' | 'reports' | 'insights' | 'store' | 'settings' | 'paymentSetup';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('login');
@@ -20,7 +21,13 @@ export default function App() {
 
   const handleLogin = () => {
     setIsLoggedIn(true);
-    setCurrentScreen('dashboard');
+    // Check if Payment Setup (QR Codes) is done
+    const upiConfig = localStorage.getItem('upi_config');
+    if (!upiConfig) {
+      setCurrentScreen('paymentSetup');
+    } else {
+      setCurrentScreen('dashboard');
+    }
   };
 
   const navigateTo = (screen: Screen) => {
@@ -54,6 +61,7 @@ export default function App() {
       {currentScreen === 'insights' && <AIInsights onNavigate={navigateTo} onLogout={handleLogout} />}
       {currentScreen === 'store' && <StoreFront onNavigate={navigateTo} />}
       {currentScreen === 'settings' && <Settings onNavigate={navigateTo} onLogout={handleLogout} />}
+      {currentScreen === 'paymentSetup' && <PaymentSetup onFinish={() => setCurrentScreen('dashboard')} />}
     </div>
   );
 }

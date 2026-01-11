@@ -119,15 +119,45 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     setShowQRDialog(true);
   };
 
-  const handleShareOnWhatsApp = () => {
+  // Helper to convert Base64 to Blob
+  const dataURLtoFile = (dataurl: string, filename: string) => {
+    const arr = dataurl.split(',');
+    const mime = arr[0].match(/:(.*?);/)?.[1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new File([u8arr], filename, { type: mime });
+  };
+
+  const handleShareOnWhatsApp = async () => {
     if (!selectedCustomer) return;
 
     const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
     const accountName = selectedConfig ? selectedConfig.customName : 'Kirana Store';
 
-    // Note: We can send text regarding the specific account, but we can't attach the image directly via URL scheme
-    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName} (QR available at shop).\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
+    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending at Kirana Store.\n\nPlease pay to ${accountName} (QR Attached).\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
 
+    // Try Web Share API first (Mobile Native Share)
+    if (selectedConfig && selectedConfig.qrImage && navigator.share) {
+      try {
+        const file = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
+        await navigator.share({
+          files: [file],
+          title: 'Payment Reminder',
+          text: message
+        });
+        toast.success(`Shared via WhatsApp`);
+        setShowQRDialog(false);
+        return;
+      } catch (error) {
+        console.warn('Share API failed, falling back to URL scheme', error);
+      }
+    }
+
+    // Fallback: WhatsApp URL Scheme (Text Only)
     const url = `https://wa.me/${selectedCustomer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
     toast.success(`WhatsApp opened for ${selectedCustomer.name}`);

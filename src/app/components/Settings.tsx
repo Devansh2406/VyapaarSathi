@@ -210,6 +210,11 @@ export default function Settings({ onNavigate, onLogout }: SettingsProps) {
                             label="Enable QR Payments"
                             action={<Switch checked={appSettings.enableQRPayments} onCheckedChange={(v) => updateSetting('enableQRPayments', v)} />}
                         />
+                        <SettingRow
+                            label="Manage Payment QRs"
+                            subLabel="Update or Change QR Code"
+                            action={<Button size="sm" variant="outline" onClick={() => onNavigate('paymentSetup')}>Update</Button>}
+                        />
                     </Card>
                 </section>
 

@@ -233,33 +233,12 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
     toast.dismiss(); // Remove loading
 
-    // 2. ATTEMPT PRIMARY FLOW: Direct to Number + Copy Image
-    // This solves "Need to select sender" - we go direct!
-    if (fileToShare) {
-      try {
-        // Try to copy Image to Clipboard
-        await navigator.clipboard.write([
-          new ClipboardItem({ [fileToShare.type]: fileToShare })
-        ]);
-
-        // If we are here, Copy Worked!
-        toast.success("Image Copied! PASTE it in the chat.", { duration: 5000, icon: '📋' });
-
-        // Open Specific Chat
-        const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
-        window.open(url, '_blank');
-        return; // Success! We are done.
-
-      } catch (copyError) {
-        console.warn("Clipboard Image Failed, falling back to Share Sheet", copyError);
-        // If Copy fails (some mobile browsers), we fall through to Step 3
-      }
-    }
-
-    // 3. FALLBACK: Mobile Native Share (Image + Text)
-    // Used if Clipboard failed. User MUST select contact here, but at least the image attaches.
+    // 2. PRIMARY FLOW: Mobile Native Share (Image + Text)
+    // We prioritize this because it's the ONLY way to attach the image file reliably.
+    // (Direct wa.me links cannot attach images due to browser security)
     if (fileToShare && navigator.share && navigator.canShare && navigator.canShare({ files: [fileToShare] })) {
-      try { await navigator.clipboard.writeText(message); } catch (e) { } // Copy text as backup
+      // Copy text to clipboard as backup (WhatsApp sometimes drops caption)
+      try { await navigator.clipboard.writeText(message); } catch (e) { }
 
       try {
         await navigator.share({
@@ -267,14 +246,29 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
           title: 'Payment Reminder',
           text: message
         });
+        toast.success("Shared! Select WhatsApp. (Paste text if caption missing)");
         return;
       } catch (err) {
         console.warn('Share cancelled', err);
+        // If share cancelled, stop here.
+        return;
       }
     }
 
-    // 4. LAST RESORT: Text Only Loop
-    // If everything failed, just open the link with text
+    // 3. FALLBACK / DESKTOP: Copy Image + Direct Link
+    // If we can't native share (e.g. Desktop), we copy image and open chat.
+    if (fileToShare) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [fileToShare.type]: fileToShare })
+        ]);
+        toast.info('Image Copied! PASTE (Ctrl+V) in the chat.', { duration: 5000, icon: '📋' });
+      } catch (e) {
+        console.warn("Clip copy failed", e);
+        toast.error("Could not copy image. Please try on Mobile.");
+      }
+    }
+
     const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   };
@@ -636,81 +630,5 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
 
       <BottomNav currentScreen="credit" onNavigate={onNavigate} />
     </div>
-  );
-}
-
-function CustomerCard({ customer, onSendReminder, onAddCredit, onSettle }: {
-  customer: Customer;
-  onSendReminder: (c: Customer) => void;
-  onAddCredit: (c: Customer) => void;
-  onSettle: (c: Customer) => void;
-}) {
-  const statusConfig = {
-    paid: { color: 'bg-green-100 text-green-700', icon: CheckCircle, label: 'Paid' },
-    due: { color: 'bg-orange-100 text-orange-700', icon: Clock, label: 'Due' },
-    overdue: { color: 'bg-red-100 text-red-700', icon: AlertTriangle, label: 'Overdue' }
-  };
-  const status = statusConfig[customer.status];
-  const StatusIcon = status.icon;
-
-  return (
-    <Card className={`p-4 ${customer.status === 'overdue' ? 'border-l-4 border-l-red-500' : ''}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <h3 className="text-gray-800 font-medium">{customer.name}</h3>
-            {customer.totalCredit > 0 ? (
-              <Badge className={`${status.color} hover:${status.color} text-xs`}>
-                <StatusIcon className="w-3 h-3 mr-1" />{status.label}
-              </Badge>
-            ) : (
-              <Badge className="bg-green-100 text-green-700 text-xs gap-1">
-                <CheckCircle className="w-3 h-3" /> Paid
-              </Badge>
-            )}
-
-          </div>
-          <div className="text-sm text-gray-600 flex items-center gap-2">
-            <Phone className="w-3 h-3" /> {customer.phone}
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-xs text-gray-500">Total Due</div>
-          <div className="text-lg font-bold text-red-600">₹{customer.totalCredit}</div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 mt-4">
-        <Button
-          variant="outline"
-          size="sm"
-          className="flex-1 text-red-600 border-red-200 hover:bg-red-50"
-          onClick={() => onAddCredit(customer)}
-        >
-          <Plus className="w-4 h-4 mr-1" /> Add
-        </Button>
-
-        {customer.totalCredit > 0 && (
-          <>
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1 border-green-200 text-green-700 hover:bg-green-50"
-              onClick={() => onSettle(customer)}
-            >
-              <CheckCircle className="w-3 h-3 mr-1" /> Settle
-            </Button>
-
-            <Button
-              size="sm"
-              className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-              onClick={() => onSendReminder(customer)}
-            >
-              <Send className="w-3 h-3 mr-1" /> Nudge
-            </Button>
-          </>
-        )}
-      </div>
-    </Card>
   );
 }

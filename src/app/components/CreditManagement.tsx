@@ -114,11 +114,6 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     toast.success('Customer added successfully!');
   };
 
-  const handleSendReminder = (customer: Customer) => {
-    setSelectedCustomer(customer);
-    setShowQRDialog(true);
-  };
-
   // Helper to convert Base64 to Blob
   const dataURLtoFile = (dataurl: string, filename: string) => {
     const arr = dataurl.split(',');
@@ -217,62 +212,74 @@ export default function CreditManagement({ onNavigate }: CreditManagementProps) 
     });
   };
 
-  const handleShareOnWhatsApp = async () => {
-    if (!selectedCustomer) return;
+  // Refactored: Reusable Share Logic
+  const processShare = async (customer: Customer, config?: UPIConfig) => {
+    toast.loading("Opening WhatsApp...");
 
-    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
-    if (!selectedConfig || !selectedConfig.qrImage) return;
+    const accountName = config ? config.customName : 'Kirana Store';
+    const message = `Hello ${customer.name}, ₹${customer.totalCredit} payment is pending for ${accountName}.\n\nPlease pay using the attached QR Card.\n\nTotal Due: ₹${customer.totalCredit}`;
 
-    const accountName = selectedConfig.customName;
-    const message = `Hello ${selectedCustomer.name}, ₹${selectedCustomer.totalCredit} payment is pending for ${accountName}.\n\nPlease pay using the attached QR Card.\n\nTotal Due: ₹${selectedCustomer.totalCredit}`;
+    let fileToShare: File | null = null;
 
-    // 1. Generate Smart Card
-    let fileToShare: File;
-    try {
-      fileToShare = await generatePaymentCard(selectedConfig.qrImage, selectedCustomer, accountName);
-    } catch (e) {
-      // Fallback to raw QR if canvas fails
-      console.error("Canvas gen failed", e);
-      fileToShare = dataURLtoFile(selectedConfig.qrImage, 'payment-qr.png');
-    }
-
-    // 2. Try Mobile Native Share (Image + Text)
-    if (navigator.share && navigator.canShare) {
-      // Check if we can share file
-      if (navigator.canShare({ files: [fileToShare] })) {
-        // Copy text to clipboard as backup
-        try { await navigator.clipboard.writeText(message); } catch (e) {
-          console.warn('Clip write failed', e);
-        }
-
-        try {
-          await navigator.share({
-            files: [fileToShare],
-            title: 'Payment Reminder',
-            text: message // Some apps ignore this
-          });
-          toast.success('Shared! (Message copied to clipboard)');
-          setShowQRDialog(false);
-          return;
-        } catch (err) {
-          console.warn('Share cancelled/failed', err);
-        }
+    // 1. Generate Smart Card if Config exists
+    if (config && config.qrImage) {
+      try {
+        fileToShare = await generatePaymentCard(config.qrImage, customer, accountName);
+      } catch (e) {
+        console.error("Canvas failed", e);
+        fileToShare = dataURLtoFile(config.qrImage, 'payment-qr.png');
       }
     }
 
-    // 3. Desktop Fallback: Copy Generated Card + Open WhatsApp
-    try {
-      await navigator.clipboard.write([
-        new ClipboardItem({ [fileToShare.type]: fileToShare })
-      ]);
-      toast.info('Payment Card copied! Paste in WhatsApp.', { duration: 4000 });
-    } catch (e) {
-      console.warn("Auto-copy failed", e);
+    toast.dismiss(); // Remove loading
+
+    // 2. Mobile Native Share (Image + Text)
+    if (fileToShare && navigator.share && navigator.canShare && navigator.canShare({ files: [fileToShare] })) {
+      // Copy text backup
+      try { await navigator.clipboard.writeText(message); } catch (e) { }
+
+      try {
+        await navigator.share({
+          files: [fileToShare],
+          title: 'Payment Reminder',
+          text: message
+        });
+        toast.success(`Shared! (Message copied)`);
+        return;
+      } catch (err) {
+        console.warn('Share cancelled', err);
+        return; // Don't fallback if user cancelled explicitly
+      }
     }
 
-    // Fallback URL Scheme
-    const url = `https://wa.me/${selectedCustomer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
+    // 3. Desktop/Fallback: URL Scheme (Text Only or Clipboard)
+    if (fileToShare) {
+      try {
+        await navigator.clipboard.write([
+          new ClipboardItem({ [fileToShare.type]: fileToShare })
+        ]);
+        toast.info('Payment Card copied! Paste in WhatsApp.', { duration: 4000 });
+      } catch (e) {
+        console.warn("Clip copy failed", e);
+      }
+    }
+
+    const url = `https://wa.me/${customer.phone.replace(/\s+/g, '')}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
+  };
+
+  // Nudge Click Handler
+  const handleSendReminder = (customer: Customer) => {
+    // Quick Nudge: Immediately trigger share with Default QR
+    const defaultConfig = upiConfigs.length > 0 ? upiConfigs[0] : undefined;
+    processShare(customer, defaultConfig);
+  };
+
+  const handleShareOnWhatsApp = () => {
+    // Dialog Version (Manual Selection)
+    if (!selectedCustomer) return;
+    const selectedConfig = upiConfigs.find(u => u.id === selectedQrId);
+    processShare(selectedCustomer, selectedConfig);
     setShowQRDialog(false);
   };
 
